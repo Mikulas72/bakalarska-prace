@@ -1,7 +1,32 @@
 import SimpleITK as sitk
+import numpy as np
+from SimpleITK import GetImageFromArray
+
+
+# Načtení řezů a převod do 3D matice obrazu
+def nacteni_referencniho_a_pohybliveho_obrazu(cesta_k_souborum, cesta_k_souborum_reference):
+    # Zpracování pohyblivého 3D obrazu
+    serie_obrazku = sitk.ImageSeriesReader.GetGDCMSeriesFileNames(cesta_k_souborum)
+    serie_obrazku = list(serie_obrazku)
+
+    ctecka_serie = sitk.ImageSeriesReader()
+    ctecka_serie.SetFileNames(serie_obrazku)
+    obrazek_3D = ctecka_serie.Execute()
+    CT_snimky = sitk.GetArrayFromImage(obrazek_3D)
+
+    # Zpracování referenčního 3D obrazu
+    serie_obrazku_reference = sitk.ImageSeriesReader.GetGDCMSeriesFileNames(cesta_k_souborum_reference)
+    serie_obrazku_reference = list(serie_obrazku_reference)
+
+    ctecka_serie_reference = sitk.ImageSeriesReader()
+    ctecka_serie_reference.SetFileNames(serie_obrazku_reference)
+    reference_3D = ctecka_serie_reference.Execute()
+    CT_reference = sitk.GetArrayFromImage(reference_3D)
+
+    return CT_snimky, CT_reference
 
 # Provedení elastické registrace obrazu podle referencniho obrazku.
-def elasticka_registrace_obrazu(CT_snimky, referencni_obraz, pocet_iteraci=50, minimalni_chyba=1.0):
+def elasticka_registrace_obrazu(CT_snimky, referencni_obraz, pocet_iteraci=75, minimalni_chyba=3):
     elasticky_filtr_obrazu = sitk.DemonsRegistrationFilter()
 
     # Nastavení parametrů registrace
@@ -42,27 +67,20 @@ def elasticka_registrace_obrazu(CT_snimky, referencni_obraz, pocet_iteraci=50, m
     spojeni_rezu = sitk.JoinSeries(list_obrazu_sitk)
     return spojeni_rezu
 
-# Načtení řezů a převod do 3D matice obrazu
-def nacteni_referencniho_a_pohybliveho_obrazu(cesta_k_souborum, cesta_k_souborum_reference):
-    # Zpracování pohyblivého 3D obrazu
-    serie_obrazku = sitk.ImageSeriesReader.GetGDCMSeriesFileNames(cesta_k_souborum)
-    serie_obrazku = list(serie_obrazku)
+# Aplikace CT okna na vytvořený obraz
+def CT_okno(obrazek, stred_okna=60, sirka_okna=150):
+    obrazek = sitk.GetArrayFromImage(obrazek)
 
-    ctecka_serie = sitk.ImageSeriesReader()
-    ctecka_serie.SetFileNames(serie_obrazku)
-    obrazek_3D = ctecka_serie.Execute()
-    CT_snimky = sitk.GetArrayFromImage(obrazek_3D)
+    spodni_konec_okna = stred_okna - (sirka_okna / 2)
+    horni_konec_okna = stred_okna + (sirka_okna / 2)
 
-    # Zpracování referenčního 3D obrazu
-    serie_obrazku_reference = sitk.ImageSeriesReader.GetGDCMSeriesFileNames(cesta_k_souborum_reference)
-    serie_obrazku_reference = list(serie_obrazku_reference)
+    ohraniceni_kontrastu = np.clip(obrazek, spodni_konec_okna, horni_konec_okna)
 
-    ctecka_serie_reference = sitk.ImageSeriesReader()
-    ctecka_serie_reference.SetFileNames(serie_obrazku_reference)
-    reference_3D = ctecka_serie_reference.Execute()
-    CT_reference = sitk.GetArrayFromImage(reference_3D)
+    # Normalizace
+    vysledek = 255.0 * (ohraniceni_kontrastu - spodni_konec_okna) / (horni_konec_okna - spodni_konec_okna)
 
-    return CT_snimky, CT_reference
+    vyokneny_obraz = GetImageFromArray(vysledek)
+    return vyokneny_obraz
 
 # Cesty k souborům a referencím
 cesta_k_souborum = r"C:\Users\perla\OneDrive\Plocha\škola\bakalářka\Data_BP\Data_BP\41\CTA3"
@@ -72,5 +90,27 @@ cesta_k_souborum_reference = r"C:\Users\perla\OneDrive\Plocha\škola\bakalářka
 CT_snimky, CT_reference = nacteni_referencniho_a_pohybliveho_obrazu(cesta_k_souborum=cesta_k_souborum, cesta_k_souborum_reference=cesta_k_souborum_reference)
 spojeni_rezu = elasticka_registrace_obrazu(CT_snimky=CT_snimky, referencni_obraz=CT_reference)
 
+# Údaje pro mozkové okno
+sirka_okna = 150
+stred_okna = 60
+
+# Zeptej se uživatele, zda chce aplikovat CT okno
+zadany_prikaz = False
+while zadany_prikaz == False:
+    dotaz = input("Přejete si aplikovat CT okno (Y/N)? ")
+
+    if dotaz == "Y":
+        print("Provádím vyokňování.")
+        zadany_prikaz = True
+        ohraniceni_kontrastu_sitk = CT_okno(obrazek=spojeni_rezu, stred_okna=stred_okna, sirka_okna=sirka_okna)
+    elif dotaz == "N":
+        zadany_prikaz = True
+    else:
+        print("Chybný vstup. Zadejte ho prosím znohu.")
+
+
 # Zobrazení pomocí Fiji
 sitk.Show(spojeni_rezu, "CT snímky", debugOn=True)
+
+if dotaz == "Y":
+    sitk.Show(ohraniceni_kontrastu_sitk, "CT snímky po aplikaci mozkového okna", debugOn=True)
