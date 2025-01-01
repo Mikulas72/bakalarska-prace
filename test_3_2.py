@@ -1,116 +1,118 @@
 import SimpleITK as sitk
-import numpy as np
-from SimpleITK import GetImageFromArray
 
 
-# Načtení řezů a převod do 3D matice obrazu
-def nacteni_referencniho_a_pohybliveho_obrazu(cesta_k_souborum, cesta_k_souborum_reference):
-    # Zpracování pohyblivého 3D obrazu
-    serie_obrazku = sitk.ImageSeriesReader.GetGDCMSeriesFileNames(cesta_k_souborum)
-    serie_obrazku = list(serie_obrazku)
+# Funkce, jejíž funkčí je načtení obrazu ze složky do formátu SimpleITK
+def nacti_obrazek(cesta):
+    reader = sitk.ImageSeriesReader()
+    slozka = reader.GetGDCMSeriesFileNames(cesta)
+    reader.SetFileNames(slozka)
 
-    ctecka_serie = sitk.ImageSeriesReader()
-    ctecka_serie.SetFileNames(serie_obrazku)
-    obrazek_3D = ctecka_serie.Execute()
-    CT_snimky = sitk.GetArrayFromImage(obrazek_3D)
+    obrazek = reader.Execute()
 
-    # Zpracování referenčního 3D obrazu
-    serie_obrazku_reference = sitk.ImageSeriesReader.GetGDCMSeriesFileNames(cesta_k_souborum_reference)
-    serie_obrazku_reference = list(serie_obrazku_reference)
+    return obrazek
 
-    ctecka_serie_reference = sitk.ImageSeriesReader()
-    ctecka_serie_reference.SetFileNames(serie_obrazku_reference)
-    reference_3D = ctecka_serie_reference.Execute()
-    CT_reference = sitk.GetArrayFromImage(reference_3D)
+# Funkce, jejímž úkolem je provést predzpracování obrazů (sjednocení metadat)
+def predzpracovani_obrazu(fixni_obrazek, pohyblivy_obrazek):
+    # Sjednocuji orientaci registrovaného obrazu tak, aby odpovídal orientaci fixního obrazu
+    if fixni_obrazek.GetDirection() != pohyblivy_obrazek.GetDirection():
+        pohyblivy_obrazek.SetDirection(fixni_obrazek.GetDirection())
 
-    return CT_snimky, CT_reference
+    # Nastavuji společnou pozici počátku
+    pohyblivy_obrazek.SetOrigin(fixni_obrazek.GetOrigin())
 
-# Provedení elastické registrace obrazu podle referencniho obrazku.
-def elasticka_registrace_obrazu(CT_snimky, referencni_obraz, pocet_iteraci=75, minimalni_chyba=3):
-    elasticky_filtr_obrazu = sitk.DemonsRegistrationFilter()
+    return pohyblivy_obrazek
 
-    # Nastavení parametrů registrace
-    elasticky_filtr_obrazu.SetNumberOfIterations(pocet_iteraci)  # Počet iterací
-    elasticky_filtr_obrazu.SetStandardDeviations(minimalni_chyba)  # Výchozí hodnoty pro standardní odchylky (ovlivňuje hladkost deformace)
+# Funkce, která provádí rigidní registraci obrazu
+def registrace_obrazu_rigidni(fixni_obrazek, pohyblivy_obrazek):
+    # Sjednocuji datový typ registrovaného obrazu tak, aby odpovídal datovému typu fixního obrazu
+    if pohyblivy_obrazek.GetPixelIDTypeAsString() != fixni_obrazek.GetPixelIDTypeAsString():
+        fixni_obrazek = sitk.Cast(fixni_obrazek, sitk.sitkFloat32)
+        pohyblivy_obrazek = sitk.Cast(pohyblivy_obrazek, sitk.sitkFloat32)
 
-    # Zkontroluj, že pohyblivý a referenční obrázek mají stejný datový typ, pokud nemají, sjednoď ho
-    if CT_snimky.dtype != referencni_obraz.dtype:
-        typ_CT_snimky = CT_snimky.dtype.name
-        typ_reference = referencni_obraz.dtype.name
-        cislo_CT_snimky = int(typ_CT_snimky[len(typ_CT_snimky) - 2 : len(typ_CT_snimky)])
-        cislo_reference = int(typ_reference[len(typ_reference) - 2 : len(typ_reference)])
+    rigidni_registrace = sitk.ImageRegistrationMethod()
+    # Nastavení rigidní transformace
+    inicializacni_transformace = sitk.CenteredTransformInitializer(fixni_obrazek, pohyblivy_obrazek,
+                                                                   sitk.Euler3DTransform(),
+                                                                   sitk.CenteredTransformInitializerFilter.GEOMETRY)
 
-        if cislo_CT_snimky > cislo_reference:
-            novy_type = "int" + str(cislo_CT_snimky)
-            referencni_obraz = referencni_obraz.astype(novy_type)
-        else:
-            novy_type = "int" + str(cislo_reference)
-            CT_snimky = CT_snimky.astype(novy_type)
+    # Provedení rigidní transformace
+    rigidni_registrace.SetInitialTransform(inicializacni_transformace, inPlace=False)
+    rigidni_registrace.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
+    rigidni_registrace.SetOptimizerAsGradientDescent(learningRate=1.0, numberOfIterations=200)
+    rigidni_registrace.SetInterpolator(sitk.sitkLinear)
+    rigidni_registrace.SetShrinkFactorsPerLevel([4, 2, 1])
+    rigidni_registrace.SetSmoothingSigmasPerLevel([2, 1, 0])
 
-    # Prováděj elastickou registraci obrazu vrstvu po vrstvě
-    list_obrazu_sitk = []
-    for index in range(0, CT_snimky.shape[0]):
-        print(f"Zpracovávám {index + 1} vrstvu.")
-        rez = CT_snimky[index, :, :]
-        rez_sitk = sitk.GetImageFromArray(rez)
+    # Aplikace rigidní transformace
+    rigidni_transformace = rigidni_registrace.Execute(fixni_obrazek, pohyblivy_obrazek)
+    return rigidni_transformace
 
-        referencni_rez = referencni_obraz[index, :, :]
-        referencni_rez_sitk = sitk.GetImageFromArray(referencni_rez)
+# Funkce, která provádí elastickou registraci obrazu
+def registrace_obrazu(fixni_obrazek, pohyblivy_obrazek):
+    # Sjednocuji datový typ registrovaného obrazu tak, aby odpovídal datovému typu fixního obrazu
+    if pohyblivy_obrazek.GetPixelIDTypeAsString() != fixni_obrazek.GetPixelIDTypeAsString():
+        fixni_obrazek = sitk.Cast(fixni_obrazek, sitk.sitkFloat32)
+        pohyblivy_obrazek = sitk.Cast(pohyblivy_obrazek, sitk.sitkFloat32)
 
-        # Provádění elastické registrace
-        deformace = elasticky_filtr_obrazu.Execute(referencni_rez_sitk, rez_sitk)
-        registrovany_obraz = sitk.Warp(rez_sitk, deformace)
+    registracni_metoda = sitk.ImageRegistrationMethod()
+    # Nastavení elastické transformace
+    registracni_metoda.SetMetricAsMattesMutualInformation(numberOfHistogramBins=50)
 
-        list_obrazu_sitk.append(registrovany_obraz)
+    # Provedení elastické transformace
+    registracni_metoda.SetMetricSamplingStrategy(registracni_metoda.RANDOM)
+    registracni_metoda.SetMetricSamplingPercentage(0.01)
+    registracni_metoda.SetShrinkFactorsPerLevel([4, 2, 1])
+    registracni_metoda.SetSmoothingSigmasPerLevel([2.0, 1.0, 0.0])
 
-    list_obrazu_sitk = tuple(list_obrazu_sitk)
-    spojeni_rezu = sitk.JoinSeries(list_obrazu_sitk)
-    return spojeni_rezu
+    registracni_metoda.SetOptimizerAsGradientDescent(learningRate=1.0, numberOfIterations=100,
+                                                     convergenceMinimumValue=1e-6, convergenceWindowSize=10)
+    registracni_metoda.SetOptimizerScalesFromPhysicalShift()
 
-# Aplikace CT okna na vytvořený obraz
-def CT_okno(obrazek, stred_okna=60, sirka_okna=150):
-    obrazek = sitk.GetArrayFromImage(obrazek)
+    pocatecni_transformace = sitk.CenteredTransformInitializer(fixni_obrazek, pohyblivy_obrazek,
+                                                               sitk.Euler3DTransform(),
+                                                               sitk.CenteredTransformInitializerFilter.GEOMETRY)
+    registracni_metoda.SetInitialTransform(pocatecni_transformace, inPlace=False)
+    registracni_metoda.SetInterpolator(sitk.sitkLinear)
 
-    spodni_konec_okna = stred_okna - (sirka_okna / 2)
-    horni_konec_okna = stred_okna + (sirka_okna / 2)
+    # Aplikace elastické transformace
+    finalni_transformace = registracni_metoda.Execute(fixni_obrazek, pohyblivy_obrazek)
+    return finalni_transformace
 
-    ohraniceni_kontrastu = np.clip(obrazek, spodni_konec_okna, horni_konec_okna)
+# Hlavní funkce programu (sjednocuje celý chod programu)
+def hlavni_funkce(cesta_k_souborum_reference, cesta_k_souborum):
+    # Načtení fixního a pohyblivého obrazu
+    pohyblivy_obrazek = nacti_obrazek(cesta=cesta_k_souborum)
+    fixni_obrazek = nacti_obrazek(cesta=cesta_k_souborum_reference)
 
-    # Normalizace
-    vysledek = 255.0 * (ohraniceni_kontrastu - spodni_konec_okna) / (horni_konec_okna - spodni_konec_okna)
+    # Prvotní predzpracování pohyblivého obrazu tak, aby jeho metadata co nejvíce odpovídali fixnímu obrazu
+    pohyblivy_obrazek_zpracovany = predzpracovani_obrazu(fixni_obrazek=fixni_obrazek, pohyblivy_obrazek=pohyblivy_obrazek)
 
-    vyokneny_obraz = GetImageFromArray(vysledek)
-    return vyokneny_obraz
+    # Provedení rigidní transformace
+    transformace = registrace_obrazu_rigidni(fixni_obrazek=fixni_obrazek, pohyblivy_obrazek=pohyblivy_obrazek_zpracovany)
 
-# Cesty k souborům a referencím
-cesta_k_souborum = r"C:\Users\perla\OneDrive\Plocha\škola\bakalářka\Data_BP\Data_BP\41\CTA3"
+    # Aplikace rigidní transformace na pohyblivý obraz
+    vysledek_rigidni = sitk.Resample(pohyblivy_obrazek_zpracovany, fixni_obrazek, transformace, sitk.sitkLinear, 0.0, pohyblivy_obrazek_zpracovany.GetPixelID())
+    pohyblivy_obrazek_novy = vysledek_rigidni
+
+    # Aplikace elastické transformace na pohyblivý obraz
+    transformace_nova = registrace_obrazu(fixni_obrazek=fixni_obrazek, pohyblivy_obrazek=pohyblivy_obrazek_novy)
+    vysledek = sitk.Resample(pohyblivy_obrazek_novy, fixni_obrazek, transformace_nova, sitk.sitkLinear, 0.0, pohyblivy_obrazek_novy.GetPixelID())
+
+    return fixni_obrazek, vysledek
+
+
+# Cesty k složce, kde se nachází referenční obraz a obraz, který se má registrovat
+cesta_k_souborum = r"C:\Users\perla\OneDrive\Plocha\škola\bakalářka\Data_BP\Data_BP\41\CTA2"
 cesta_k_souborum_reference = r"C:\Users\perla\OneDrive\Plocha\škola\bakalářka\Data_BP\Data_BP\41\nativ"
 
-# Volání funkce
-CT_snimky, CT_reference = nacteni_referencniho_a_pohybliveho_obrazu(cesta_k_souborum=cesta_k_souborum, cesta_k_souborum_reference=cesta_k_souborum_reference)
-spojeni_rezu = elasticka_registrace_obrazu(CT_snimky=CT_snimky, referencni_obraz=CT_reference)
+# Volání hlavní funkce, které provede celou registraci
+fixni_obrazek, vysledek = hlavni_funkce(cesta_k_souborum=cesta_k_souborum, cesta_k_souborum_reference=cesta_k_souborum_reference)
 
-# Údaje pro mozkové okno
-sirka_okna = 150
-stred_okna = 60
+# Uložení registrovaného obrazu
+sitk.WriteImage(vysledek, "vysledek_registrace.nii")
 
-# Zeptej se uživatele, zda chce aplikovat CT okno
-zadany_prikaz = False
-while zadany_prikaz == False:
-    dotaz = input("Přejete si aplikovat CT okno (Y/N)? ")
-
-    if dotaz == "Y":
-        print("Provádím vyokňování.")
-        zadany_prikaz = True
-        ohraniceni_kontrastu_sitk = CT_okno(obrazek=spojeni_rezu, stred_okna=stred_okna, sirka_okna=sirka_okna)
-    elif dotaz == "N":
-        zadany_prikaz = True
-    else:
-        print("Chybný vstup. Zadejte ho prosím znohu.")
-
-
-# Zobrazení pomocí Fiji
-sitk.Show(spojeni_rezu, "CT snímky", debugOn=True)
-
-if dotaz == "Y":
-    sitk.Show(ohraniceni_kontrastu_sitk, "CT snímky po aplikaci mozkového okna", debugOn=True)
+# Vykreslení registrovaného obrazu a nativního obrazu ve Fiji
+fixni_obrazek = sitk.Cast(fixni_obrazek, sitk.sitkFloat32)
+sitk.Show(fixni_obrazek, "nativ", debugOn=True)
+vysledek = sitk.Cast(vysledek, sitk.sitkFloat32)
+sitk.Show(vysledek, "CT snímky", debugOn=True)
