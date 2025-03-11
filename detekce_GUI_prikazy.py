@@ -24,18 +24,21 @@ def nacist_obrazek():
 
     dotaz = tk.Label(dotaz_okno, text="Vyberte, zda chcece načíst samotný soubor nebo celou složku.")
     dotaz.pack()
-    tlacitko_soubor = tk.Button(dotaz_okno, text="Soubor", font=font_tlacitek, command=lambda: (dotaz_okno.destroy(), nacti_soubor()))
+    tlacitko_soubor = tk.Button(dotaz_okno, text="DICOM", font=font_tlacitek, command=lambda: (dotaz_okno.destroy(), nacti_soubor()))
     tlacitko_soubor.pack(side="left", padx=30, anchor="center")
-    tlacitko_slozka = tk.Button(dotaz_okno, text="Složka", font=font_tlacitek, command=lambda: (dotaz_okno.destroy(), nacti_slozku()))
+    tlacitko_slozka = tk.Button(dotaz_okno, text="NIfTI", font=font_tlacitek, command=lambda: (dotaz_okno.destroy(), nacti_slozku()))
     tlacitko_slozka.pack(side="right", padx=30, anchor="center")
 
     dotaz_okno.mainloop()
 
 def nacti_soubor():
-    soubor = filedialog.askopenfilename(title="Vyber soubor", filetypes=[("Všechny soubory", "*.*")])
+    soubor = filedialog.askopenfilename(title="Vyber soubor", filetypes=[("DICOM soubor", "*.dcm"), ("NIfTI soubor", "*.nii"), ("Všechny soubory", "*.*")])
 
-    if soubor:
-        print("Vybraný soubor: ", soubor)
+    cesta = soubor.replace("\\", "/")
+    obrazek_nacteny = sitk.ReadImage(cesta)
+
+    sitk.WriteImage(obrazek_nacteny, "upload_image.nii")
+    odpoved_po_nacteni()
 
 
 def nacti_slozku():
@@ -45,25 +48,33 @@ def nacti_slozku():
     obrazek_nacteny = nacti_obrazek(cesta=cesta)
 
     sitk.WriteImage(obrazek_nacteny, "upload_image.nii")
-    # dotaz_po_nacteni()
+    odpoved_po_nacteni()
 
 
-def dotaz_po_nacteni():
+def odpoved_po_nacteni():
     dotaz_okno = tk.Tk()
-    dotaz_okno.title("Zobrazení")
-    dotaz_okno.geometry("300x100")
-    font_tlacitek = ("Arial", 12, "bold")
+    dotaz_okno.title("Nahrávání obrazu")
+    dotaz_okno.geometry("300x50")
 
-    dotaz = tk.Label(dotaz_okno, text="Obraz byl úspěšně načtený a uložený do paměti.")
+    dotaz = tk.Label(dotaz_okno, text="Obraz byl úspěšně načtený a uložený do paměti.", anchor="center")
     dotaz.pack()
-    dotaz_2 = tk.Label(dotaz_okno, text="Chcete ho zobrazit?")
-    dotaz_2.pack(side="top")
-    tlacitko_soubor = tk.Button(dotaz_okno, text="ANO", font=font_tlacitek)
-    tlacitko_soubor.pack(side="left", padx=30, anchor="center")
-    tlacitko_slozka = tk.Button(dotaz_okno, text="NE", font=font_tlacitek, command=dotaz_okno.destroy)
-    tlacitko_slozka.pack(side="right", padx=30, anchor="center")
 
 
 def uloz_soubor():
-    soubor = filedialog.asksaveasfilename(defaultextension=".nii",
+    cesta_k_ulozenemu_souboru = filedialog.asksaveasfilename(defaultextension=".nii",
                                           filetypes=[("DICOM soubor", "*.dcm"), ("NIfTI soubor", "*.nii"), ("Všechny soubory", "*.*")])
+
+    if cesta_k_ulozenemu_souboru:
+        obrazek = sitk.ReadImage("upload_image.nii")
+        sitk.WriteImage(obrazek, cesta_k_ulozenemu_souboru)
+        odpoved_po_ulozeni()
+
+
+def odpoved_po_ulozeni():
+    dotaz_okno = tk.Tk()
+    dotaz_okno.title("Uložení obrazu")
+    dotaz_okno.geometry("300x50")
+
+    dotaz = tk.Label(dotaz_okno, text="Obraz byl úspěšně uložený na vybrané místo.", anchor="center")
+    dotaz.pack()
+
